@@ -4,7 +4,17 @@
 
 > **Audience:** founder/operator + engineers.
 > **Philosophy:** *Capital preservation first. Avoid bad trades. Boring, consistent, cheap, automated.*
-> **Companion docs:** [`07-ai-ml-llm-roadmap.md`](./07-ai-ml-llm-roadmap.md) (ML/LLM detail) · [`08-how-the-bot-works-today.md`](./08-how-the-bot-works-today.md) (current system).
+>
+> 📌 **Scope note:** This doc covers the **trading engine / AI** specifically. DS2AuraTrading is a **complete commercial SaaS** (landing, auth, dashboard, profile, charts, analytics, admin, billing) — the rest of the product is designed in the companion master plans below. Read this for *how it trades*; read the others for *how it ships as a business*.
+>
+> **📚 Master-plan doc set:**
+> - **This** — Trading engine, AI/ML/LLM, risk, infra for the bot
+> - [`PRODUCT_ARCHITECTURE_MASTER_PLAN.md`](./PRODUCT_ARCHITECTURE_MASTER_PLAN.md) — whole-product review: dashboard, profile, exchange/strategy/risk UI, analytics, mobile
+> - [`USER_JOURNEY_MASTER_PLAN.md`](./USER_JOURNEY_MASTER_PLAN.md) — visitor → registration/auth → onboarding → retention
+> - [`ADMIN_PORTAL_MASTER_PLAN.md`](./ADMIN_PORTAL_MASTER_PLAN.md) — metrics, user mgmt, KYC, global kill-switch, oversight
+> - [`SAAS_PLATFORM_MASTER_PLAN.md`](./SAAS_PLATFORM_MASTER_PLAN.md) — plans/pricing, billing, notifications, analytics, monetization
+> - [`PRODUCTION_DEPLOYMENT_MASTER_PLAN.md`](./PRODUCTION_DEPLOYMENT_MASTER_PLAN.md) — environments, CI/CD, observability, security, scaling, incident response
+> - [`07-ai-ml-llm-roadmap.md`](./07-ai-ml-llm-roadmap.md) (ML/LLM detail) · [`08-how-the-bot-works-today.md`](./08-how-the-bot-works-today.md) (current engine)
 >
 > ⚠️ **Honest disclaimer (read once):** No system "wins every trade." Crypto is non-stationary and adversarial. The realistic edge here is **fewer bad trades, smaller drawdowns, faster adaptation, and low cost** — not certainty. Every change is proven in **paper** before it risks a cent.
 
