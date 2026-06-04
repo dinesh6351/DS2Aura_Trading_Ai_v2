@@ -18,7 +18,9 @@
 
 ---
 
-## 2. Plan design 🎯 (Free / Starter / Pro / Enterprise)
+## 2. Plan design 🎯 (Free / Starter / Pro / Premium / Enterprise)
+
+> 📌 **Canonical tiers = Free · Starter · Pro · Premium · Enterprise** — the authoritative feature/mode gate is the matrix in [`FINAL_TRADING_AGENT_MASTER_PLAN.md` §31](./FINAL_TRADING_AGENT_MASTER_PLAN.md#31-subscription-feature-matrix). **Premium** is the **full-automation** tier; **Enterprise** adds teams/white-label. The 4-tier list in older revisions is superseded by this 5-tier model.
 
 > Value-metric = **capital protected + exchanges + strategies + AI**, *not* trade count (we never charge for more trades — that would incentivize overtrading, against the core principle).
 

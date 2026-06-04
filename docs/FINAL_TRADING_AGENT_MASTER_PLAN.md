@@ -2,6 +2,8 @@
 
 **A production-grade blueprint to evolve DS2AuraTrading into a world-class, capital-preserving, multi-exchange AI crypto trading platform — at near-zero cost.**
 
+> 🗂️ **Start at the master index:** [`docs/README.md`](./README.md) — full document map + the end-to-end setup path (solo dev → global SaaS).
+>
 > **Audience:** founder/operator + engineers.
 > **Philosophy:** *Capital preservation first. Avoid bad trades. Boring, consistent, cheap, automated.*
 >

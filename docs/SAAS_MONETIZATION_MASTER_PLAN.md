@@ -19,6 +19,8 @@
 
 ## 1. Plans
 
+> 📌 **Canonical tiers = Free · Starter · Pro · Premium · Enterprise** — the authoritative feature gate is the matrix in [`FINAL_TRADING_AGENT_MASTER_PLAN.md` §31](./FINAL_TRADING_AGENT_MASTER_PLAN.md#31-subscription-feature-matrix). The **"Team" tier below is a multi-seat option** whose seat/white-label features now fold into **Premium / Enterprise**. Prices here are indicative.
+
 | | 🆓 **Free** | 🚀 **Starter** | 💎 **Pro** | 👥 **Team** | 🏢 **Enterprise** |
 |---|---|---|---|---|---|
 | **Price** | $0 | **$15/mo** | **$39/mo** ($390/yr) | **$99/mo** | custom |

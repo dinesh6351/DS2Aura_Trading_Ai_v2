@@ -6,6 +6,7 @@
 > V1 keeps running untouched in its own repo.
 >
 > 📘 **Read first:**
+> - 🗂️ [`docs/README.md`](docs/README.md) — **master index + end-to-end setup (START HERE)**
 > - [`docs/FINAL_TRADING_AGENT_MASTER_PLAN.md`](docs/FINAL_TRADING_AGENT_MASTER_PLAN.md) — the full V2 blueprint
 > - [`docs/08-how-the-bot-works-today.md`](docs/08-how-the-bot-works-today.md) — how the engine works today
 > - [`docs/07-ai-ml-llm-roadmap.md`](docs/07-ai-ml-llm-roadmap.md) — ML/LLM detail
