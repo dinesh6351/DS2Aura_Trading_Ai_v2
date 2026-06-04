@@ -58,6 +58,24 @@
 19. [Expected Benefits](#19-expected-benefits)
 20. [Priority Actions](#20-priority-actions)
 
+**Part B — User trading modes (Advisor → Signal → Paper → Semi-auto → Full-auto)**
+
+21. [AI Advisor Architecture](#21-ai-advisor-architecture)
+22. [Signal Engine Architecture](#22-signal-engine-architecture)
+23. [Paper Trading Architecture](#23-paper-trading-architecture)
+24. [Semi-Automated Trading Architecture](#24-semi-automated-trading-architecture)
+25. [Full Automation Architecture](#25-full-automation-architecture)
+26. [Trade Recommendation Engine](#26-trade-recommendation-engine)
+27. [Entry Engine Design](#27-entry-engine-design)
+28. [Exit Engine Design](#28-exit-engine-design)
+29. [Confidence Scoring Framework](#29-confidence-scoring-framework)
+30. [Trade Validation Framework](#30-trade-validation-framework)
+31. [Subscription Feature Matrix](#31-subscription-feature-matrix)
+32. [AI Performance Analytics](#32-ai-performance-analytics)
+33. [Paper Trading Dashboard Design](#33-paper-trading-dashboard-design)
+34. [Live Trading Dashboard Design](#34-live-trading-dashboard-design)
+35. [User Trading Modes Architecture](#35-user-trading-modes-architecture)
+
 ---
 
 ## 0. Prerequisites
@@ -761,6 +779,293 @@ flowchart TB
 7. 🔐 **Security hardening** (P6) — withdraw-disabled keys, exchange IP allow-list, secrets manager, Sentry, backups + restore drill.
 
 **Do NOT do:** chase more trades, raise leverage, build a multi-LLM swarm, let an LLM place orders, or migrate to Kubernetes/AWS before 1k+ users.
+
+---
+
+# PART B — User Trading Modes (Advisor → Signal → Paper → Semi-auto → Full-auto)
+
+> **The big idea: one brain, five levels of trust.** The same recommendation engine (§26) runs every tick; the user's **mode** only changes *what happens with the recommendation* — display it, signal it, paper-trade it, ask approval, or auto-execute. Users **start safe** (advisor/paper) and **graduate** to automation as they build trust — with strict risk controls and full transparency at every level.
+>
+> ⚠️ **Legal positioning (critical):** "Advisor" and "Signal" modes output **analysis from rules the user configures** — they are **software/automation/education tools, NOT personalized investment advice**, NOT tips, and carry **no profit guarantee**. Frame and disclaim them accordingly (mandatory risk-disclosure + "not financial advice" consent) to stay clear of investment-adviser regulation. See [`LEGAL_AND_COMPLIANCE_MASTER_PLAN.md`](./LEGAL_AND_COMPLIANCE_MASTER_PLAN.md).
+
+### The mode ladder
+
+```mermaid
+flowchart LR
+  ENG["Recommendation Engine (§26)\nentry · SL · TP · confidence · reasoning"] --> M1["1 · Advisor\n(show only)"]
+  ENG --> M2["2 · Signal\n(LONG/SHORT/HOLD/WAIT)"]
+  ENG --> M3["3 · Paper\n(virtual execute)"]
+  ENG --> M4["4 · Semi-auto\n(user approves → execute)"]
+  ENG --> M5["5 · Full-auto\n(risk-validated auto-execute)"]
+  classDef s fill:#e8f5e9,stroke:#43a047; classDef r fill:#ffebee,stroke:#e53935;
+  class M1,M2,M3 s; class M4,M5 r;
+```
+
+| Mode | Executes? | Real money? | Risk-gate? | Min plan | Safety |
+|---|---|---|---|---|---|
+| 1 Advisor | ❌ | ❌ | n/a | Starter | 🟢 safest |
+| 2 Signal | ❌ | ❌ | n/a | Starter | 🟢 |
+| 3 Paper | ✅ simulated | ❌ | ✅ | Starter | 🟢 |
+| 4 Semi-auto | ✅ on approval | ✅ | ✅ + user OK | Pro | 🟡 |
+| 5 Full-auto | ✅ automatic | ✅ | ✅ (hard) | Premium | 🟠 |
+
+> Implementation: replace the `paperTrading` boolean with a **`tradingMode` enum** (`ADVISOR | SIGNAL | PAPER | SEMI_AUTO | FULL_AUTO`) on `BotConfig`. The engine computes the recommendation once; a single branch at the execution step selects the behavior. Paper becomes a mode; "live" = semi/full.
+
+---
+
+## 21. AI Advisor Architecture
+
+**Mode 1 — the safest.** No orders, ever. The engine surfaces a full **recommendation card** per opportunity; the user decides and acts manually on their own exchange.
+
+**Card contents:** Pair · Bias · Entry (zone + optimal) · Stop-loss · TP1/TP2/TP3 · Risk score · **Confidence 0–100** · Reasoning (the "why" block, §26) · Market analysis (regime, BTC trend, F&G, key levels).
+
+```mermaid
+flowchart LR
+  ENG["Engine (§26)"] --> CARD["Advisor card (dashboard + notification)"]
+  CARD --> USER["User reads + decides"]
+  USER --> MANUAL["User trades manually on their exchange"]
+```
+
+- **No trade-permission key required** (read-only is enough) → lowest risk + easiest onboarding.
+- Delivery: dashboard "Advisor" feed + optional notification.
+- **Disclaimer gate** on first use ("analysis, not advice; you decide; trading is risky").
+
+## 22. Signal Engine Architecture
+
+**Mode 2.** The same engine emits structured, push-friendly **signals**.
+
+**Signal types:** `LONG` · `SHORT` · `HOLD` · `WAIT`. **Each signal:** Pair · Entry zone · Stop-loss · Take-profit (TP1–3) · **Risk:Reward** · Confidence · Estimated trade **duration** · **Strategy used**.
+
+```mermaid
+flowchart LR
+  ENG["Engine"] --> FMT["Signal formatter (typed payload)"]
+  FMT --> DEDUP["Dedup + cooldown + expiry"]
+  DEDUP --> DISP["Dispatcher → Telegram / Discord / push / in-app feed"]
+```
+
+- **Dedup/cooldown:** never spam the same pair; signals **expire** (price moved out of the entry zone → auto-cancel).
+- HOLD/WAIT are first-class (the discipline of *not* trading is a feature).
+- Stored in a `Signal` table for the accuracy analytics (§32).
+
+## 23. Paper Trading Architecture
+
+**Mode 3 — fully simulated, no real money.** Today paper exists but reads the **real wallet balance** for sizing (a known flaw). **Redesign: a true virtual account.**
+
+| Component | Design |
+|---|---|
+| **Virtual account / balance** | a `PaperAccount` (configurable starting balance, e.g. $10k) — **decoupled from the real wallet** (fixes the current limitation) |
+| **Virtual orders** | simulated market/limit fills at live price |
+| **Fill simulator** | optional modeled **fees + slippage** so paper ≈ live (today paper P&L is gross) |
+| **Virtual positions/PnL** | same schema as live, flagged paper; mark-to-live-price |
+| **Protection** | the existing paper watchdog (SL/TP/break-even/trailing) |
+| **Analytics** | virtual equity curve, win-rate, Sharpe, drawdown, accuracy (§33) |
+| **Strategy testing** | run different strategy presets in paper and compare |
+
+```mermaid
+flowchart LR
+  ENG["Engine"] --> RV["Risk validate (§30)"] --> PFILL["Fill simulator (fees/slippage)"]
+  PFILL --> PACC["Virtual account + PnL"] --> WD["Paper watchdog (SL/TP/trail)"] --> HIST["Paper history + analytics"]
+```
+
+> 🎯 **Make paper truly virtual** (own balance, modeled fees) so it's an honest preview of live — and the default mode for every new user.
+
+## 24. Semi-Automated Trading Architecture
+
+**Mode 4 — user approves each trade.** Bridges advice and automation.
+
+```mermaid
+flowchart LR
+  ENG["Engine"] --> RV["Risk validate (§30)"] --> PEND["Pending-approval queue"]
+  PEND --> NOTIF["Notify: Approve / Reject (with expiry)"]
+  NOTIF -- approve --> EXE["Execute on exchange"]
+  NOTIF -- reject/expire --> DROP["Discard (logged)"]
+```
+
+- **Approval UX:** push/Telegram/in-app with **one-tap Approve/Reject** and a **time window** (e.g., 5 min) → expires if price moves (no stale fills).
+- Backed by a `PendingTrade` table; realtime; full audit trail of approve/reject.
+- Risk validation runs **before** the user is even asked (don't surface trades that fail risk).
+
+## 25. Full Automation Architecture
+
+**Mode 5 — auto-execute** (today's behavior, hardened).
+
+```mermaid
+flowchart LR
+  ENG["Engine"] --> RV["Risk validation (§30)"] --> TV["Trade validation (exchange/liquidity/spread/slippage)"]
+  TV --> EXE["Auto-execute + protection watchdog"]
+```
+
+**Additional safeguards (required for auto):**
+- **Graduation gate:** must have a proven **paper track record** before full-auto unlocks.
+- **Higher confidence threshold** than lower modes (only the best setups auto-fire).
+- All §7 limits + the **global kill-switch** + drawdown auto-pause.
+- **"Re-confirm after N auto-trades or after a loss streak"** nudge; periodic email summary.
+
+---
+
+## 26. Trade Recommendation Engine
+
+The single core feeding all modes. Produces **Buy / Sell / Hold / Wait / Exit** recommendations with a typed object:
+
+```jsonc
+{
+  "pair": "BTCUSDT", "bias": "LONG|SHORT|HOLD|WAIT",
+  "entryZone": { "conservative": …, "optimal": …, "aggressive": … },
+  "stopLoss": …, "takeProfit": { "tp1": …, "tp2": …, "tp3": …, "final": … },
+  "riskReward": 3.0, "riskScore": 0-100, "confidence": 0-100,
+  "durationEst": "scalp|intraday|swing", "strategyUsed": "trend-pullback",
+  "reasoning": { "whyEntry": …, "whyExit": …, "whySL": …, "whyTP": …, "whyRisk": …, "whyConfidence": … },
+  "marketAnalysis": { "regime": …, "btcTrend": …, "fearGreed": …, "levels": … }
+}
+```
+
+**Every recommendation is explainable** — the `reasoning` block answers **Why entry / Why exit / Why SL / Why TP / Why risk / Why confidence** in plain English (already partly built via the "why gated" hover). **Exit recommendations** also fire for *open* positions (trend-reversal / structure-break / volatility spike → "consider exiting").
+
+## 27. Entry Engine Design
+
+Evaluates **13 categories** → confidence + entry levels: Trend · Momentum · Market structure · Volume · Liquidity · **Open interest** · Funding · Volatility · **Multi-timeframe** confirmation · **Order flow** · Support/Resistance · **Breakout** detection · **Pullback** detection.
+
+| Output | Definition |
+|---|---|
+| **Entry zone** | the price band where the setup is valid |
+| **Conservative entry** | deeper pullback / confirmation required → best R:R, may miss |
+| **Optimal entry** | the engine's primary trigger (balanced) |
+| **Aggressive entry** | breakout/market now → higher fill rate, worse R:R |
+
+(Maps onto the weighted signal framework in [§6.1](#6-trading-system-design).)
+
+## 28. Exit Engine Design
+
+Generates **TP1 / TP2 / TP3 / final exit** and supports multiple exit styles:
+
+| Exit type | Logic |
+|---|---|
+| Fixed TP | static R:R target |
+| Dynamic TP | adjusts to volatility/regime |
+| **Scaled TP** | book tranches at TP1/TP2, runner to final (already built) |
+| **Trailing TP** | ratchet stop behind profit (already built, +5% cap) |
+| Market-structure exit | exit on BOS/CHOCH against the trade |
+| Trend-reversal exit | exit when the higher-TF trend flips |
+| Volatility exit | exit on an ATR spike / regime shift |
+| AI exit | ML/`Exit` recommendation says edge is gone |
+
+TP1 ≈ first structure/R-multiple → arms break-even; TP2/TP3 scale out; **final** = full R:R target or trailing stop.
+
+## 29. Confidence Scoring Framework
+
+**0–100**, weighted across **9 categories**: Market structure · Trend · Volume · Volatility · Momentum · Sentiment · Risk · Liquidity · Order flow.
+
+```
+confidence = Σ(weightᵢ × scoreᵢ) → normalized 0–100
+```
+
+| Mode | Min confidence to act |
+|---|---|
+| Advisor / Signal | show all (label LOW/MED/HIGH) |
+| Paper | ≥ user threshold |
+| Semi-auto | ≥ medium (surface for approval) |
+| **Full-auto** | **≥ high** (e.g. ≥ 80) — only the best setups auto-fire |
+
+(Extends the existing normalized score in [§6.1](#6-trading-system-design); calibrated against real outcomes via §32.)
+
+## 30. Trade Validation Framework
+
+A hard **pre-execution gate** (paper/semi/full) — rejects low-quality trades before they fill:
+
+| Check | Reject if… |
+|---|---|
+| Risk limits | per-trade risk > cap |
+| Position limits | ≥ max concurrent |
+| Exposure limits | gross/per-asset/correlation cap breached |
+| Drawdown limits | daily/weekly/monthly/HWM kill-switch active |
+| Exchange health | API down / banned / key invalid |
+| Liquidity | thin book / low volume |
+| Spread | wider than threshold |
+| Slippage | est. slippage > tolerance |
+
+(This is the [Risk Manager §7](#7-risk-management-framework) + microstructure pre-flight, applied uniformly to every mode that executes.)
+
+---
+
+## 31. Subscription Feature Matrix
+
+| Feature | 🆓 Free | 🚀 Starter | 💎 Pro | 👑 Premium | 🏢 Enterprise |
+|---|:--:|:--:|:--:|:--:|:--:|
+| Dashboard + portfolio tracking | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Basic analytics | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **AI Advisor** (Mode 1) | ❌ | ✅ | ✅ | ✅ | ✅ |
+| **Signal Mode** (Mode 2) | ❌ | ✅ | ✅ | ✅ | ✅ |
+| **Paper Trading** (Mode 3) | view | ✅ | ✅ | ✅ | ✅ |
+| **Semi-auto** (Mode 4) | ❌ | ❌ | ✅ | ✅ | ✅ |
+| **Full automation** (Mode 5) | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Advanced analytics | ❌ | ❌ | ✅ | ✅ | ✅ |
+| Multi-exchange | ❌ | 1 | 1 | ✅ all | ✅ all |
+| Advanced AI (ML + sentiment) | ❌ | basic | ✅ | ✅ | ✅ priority |
+| Strategy builder | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Portfolio management | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Team / multi-portfolio / white-label | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+> Modes are the **upgrade ladder**: Free (track) → Starter (advise/signal/paper) → Pro (+semi-auto) → Premium (+full-auto, multi-exchange) → Enterprise (teams/white-label). Reconciles with [`SAAS_MONETIZATION_MASTER_PLAN.md`](./SAAS_MONETIZATION_MASTER_PLAN.md) (Premium = the automation tier). Gate via **config-driven entitlements**.
+
+## 32. AI Performance Analytics
+
+Track whether the AI is actually good — log every prediction, compare to outcome (needs the **Feature Store / `Signal` log**, [§P0](#13-implementation-roadmap)):
+
+| Metric | Definition |
+|---|---|
+| **Recommendation accuracy** | % of recommendations that would have been profitable |
+| **Entry accuracy** | did price reach the entry zone / how good was the fill |
+| **Exit accuracy** | did TP hit before SL; quality of exit timing |
+| **Signal accuracy** | LONG/SHORT win-rate; HOLD/WAIT correctly avoided losers |
+| **Risk accuracy** | did realized risk match the predicted risk score |
+| **Profitability** | expectancy, profit factor, Sharpe by strategy |
+| **Strategy performance** | per-strategy + per-regime breakdown |
+
+→ **Monthly report** (email + dashboard) per user; **calibration** feeds the confidence model and the auto-train loop ([§P5](#13-implementation-roadmap)).
+
+## 33. Paper Trading Dashboard Design
+
+Virtual **equity curve** · virtual **PnL** · **win rate** · **Sharpe** · **drawdown** · **trade history** · **strategy comparison** · and the AI-accuracy lenses: **recommendation / signal / entry / exit accuracy**. This is where users build trust before going live — make it convincing and honest (modeled fees so it ≈ live).
+
+## 34. Live Trading Dashboard Design
+
+**Current positions** · **open orders** · **realized + unrealized PnL** · **daily / weekly / monthly** performance · **risk exposure** (limits + usage gauges) · **exchange status** · **AI decisions** (every tick: scored/gated/executed + why) · **audit trail** (`AuditLog`). Full layout in [`PRODUCT_ARCHITECTURE_MASTER_PLAN.md`](./PRODUCT_ARCHITECTURE_MASTER_PLAN.md) §3.
+
+---
+
+## 35. User Trading Modes Architecture
+
+The unifying design: **one engine, one risk gate, five delivery modes, a graduation path.**
+
+```mermaid
+flowchart TD
+  ENG["Recommendation Engine (§26)\nEntry(§27) · Exit(§28) · Confidence(§29)"] --> MODE{"BotConfig.tradingMode"}
+  MODE -- ADVISOR --> A["Show card (§21)"]
+  MODE -- SIGNAL --> S["Emit signal (§22)"]
+  MODE -- PAPER --> RVp["Risk validate (§30)"] --> P["Virtual execute (§23)"]
+  MODE -- SEMI_AUTO --> RVs["Risk validate (§30)"] --> AP["User approves (§24)"] --> E1["Execute"]
+  MODE -- FULL_AUTO --> RVf["Risk validate (§30)"] --> TV["Trade validate"] --> E2["Auto-execute (§25)"]
+  A & S & P & E1 & E2 --> LOG["Log prediction → AI analytics (§32)"]
+```
+
+**Progression / graduation rules (capital-preservation by design):**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Advisor
+  Advisor --> Paper: try it risk-free
+  Paper --> SemiAuto: paper-proven (N trades, positive) + Pro plan
+  SemiAuto --> FullAuto: trusts approvals + Premium plan + graduation gate
+  FullAuto --> SemiAuto: user can step back anytime
+  FullAuto --> Paper: kill-switch / pause
+```
+
+- **`tradingMode` enum** on `BotConfig` (replaces `paperTrading`); per-mode **confidence threshold** + **subscription gate**.
+- **Default new users = Paper** (or Advisor). Full-auto requires a **paper track record + Premium + explicit risk consent**.
+- **Step-down anytime:** a user (or the kill-switch) can drop from full-auto → semi → paper instantly.
+- **Same transparency everywhere:** every mode logs the recommendation + reasoning + outcome → AI analytics (§32).
+
+> 🎯 This is the product's core UX promise: **start with AI recommendations and paper trading, then progressively upgrade to semi-automated and fully automated live trading — with strict risk controls and complete transparency at every step.**
 
 ---
 
