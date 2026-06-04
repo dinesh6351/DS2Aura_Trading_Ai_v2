@@ -1,0 +1,640 @@
+// ─────────────────────────────────────────────────────────────────────────
+// Claude SaaS Trading Platform — PostgreSQL schema (Prisma)
+//
+// Multi-tenant by design: nearly every row carries a userId FK. Cross-user
+// access is impossible at the query layer (services always scope by userId)
+// and can be additionally enforced with Postgres Row-Level Security when run
+// on Supabase (see docs/02-database-schema.md).
+//
+// Money note: USDT amounts are stored as Decimal(38,18) to avoid float drift.
+// Prices/qty likewise Decimal. Never use Float for money.
+// ─────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Enums ─────────────────────────────────────────────────────────────────
+enum Role {
+  ADMIN
+  MANAGER
+  SUPPORT
+  TRADER
+}
+
+enum UserStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum TradingMode {
+  CONSERVATIVE
+  BALANCED
+  AGGRESSIVE
+}
+
+enum BotStatus {
+  STOPPED
+  RUNNING
+  PAUSED
+  ERROR
+}
+
+enum SubscriptionPlan {
+  TRIAL
+  BASIC
+  PRO
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  EXPIRED
+  CANCELED
+}
+
+enum InvoiceStatus {
+  OPEN
+  PAID
+  VOID
+}
+
+enum ApiKeyStatus {
+  UNVERIFIED
+  VALID
+  INVALID
+  REVOKED
+}
+
+enum PositionSide {
+  LONG
+  SHORT
+}
+
+enum PositionStatus {
+  OPEN
+  CLOSED
+  LIQUIDATED
+}
+
+enum TxType {
+  FEE_CHARGE
+  FEE_REFUND
+  SUBSCRIPTION
+  ADJUSTMENT
+}
+
+enum TxStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  TELEGRAM
+}
+
+enum TicketStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  CLOSED
+}
+
+// ─── 1. users ────────────────────────────────────────────────────────────
+model User {
+  id               String     @id @default(uuid()) @db.Uuid
+  email            String     @unique
+  passwordHash     String? // null when using Supabase/Google-only auth
+  role             Role       @default(TRADER)
+  status           UserStatus @default(PENDING_VERIFICATION)
+  emailVerifiedAt  DateTime?
+  twoFactorEnabled Boolean    @default(false)
+  twoFactorSecret  String? // encrypted TOTP secret
+  supabaseUserId   String?    @unique // link to Supabase Auth if used
+  lastLoginAt      DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  profile           Profile?
+  subscription      Subscription?
+  apiKeys           ApiKey[]
+  tradingAccounts   TradingAccount[]
+  watchlists        Watchlist[]
+  botConfig         BotConfig?
+  positions         Position[]
+  trades            TradeHistory[]
+  pnlHistory        PnlHistory[]
+  usageInvoices     UsageInvoice[]
+  trialClaim        TrialClaim?
+  wallet            Wallet?
+  transactions      Transaction[]
+  notifications     Notification[]
+  tickets           SupportTicket[]
+  auditLogs         AuditLog[]
+  sessions          Session[]
+  couponRedemptions CouponRedemption[]
+
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+// ─── 2. profiles ───────────────────────────────────────────────────────────
+model Profile {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @unique @db.Uuid
+  fullName         String
+  mobile           String?
+  mobileVerifiedAt DateTime? // set after SMS/OTP verification (trial dup-prevention)
+  country          String?
+  avatarUrl        String?
+  kycStatus        String    @default("NOT_STARTED") // NOT_STARTED | PENDING | VERIFIED | REJECTED
+  kycData          Json?
+  timezone         String    @default("UTC")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+// ─── 3. subscriptions ──────────────────────────────────────────────────────
+model Subscription {
+  id                     String             @id @default(uuid()) @db.Uuid
+  userId                 String             @unique @db.Uuid
+  plan                   SubscriptionPlan   @default(TRIAL)
+  status                 SubscriptionStatus @default(TRIALING)
+  // Pricing in integer CENTS (defaults = Basic plan). Per-user overridable.
+  monthlyPriceCents      Int                @default(1000) // $10.00
+  includedTrades         Int                @default(150)
+  overageCents           Int                @default(10) // $0.10 per extra trade
+  // One-time coupon discount applied to the NEXT invoice (0–100%), then reset to 0.
+  nextInvoiceDiscountPct Int                @default(0)
+  // MONTHLY usage window (150-trade allowance resets here) + the usage counter
+  tradesThisPeriod       Int                @default(0)
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+  // Paid-access term end (monthly for BASIC, annual for PRO). Gates trading.
+  billingInterval        String             @default("MONTH") // MONTH | YEAR
+  paidUntil              DateTime?
+  trialStartedAt         DateTime?
+  trialEndsAt            DateTime?
+  // Payment-provider linkage (Stripe/Razorpay/Binance Pay — wired in a later phase)
+  provider               String?
+  providerCustomerId     String?
+  providerSubscriptionId String?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invoices UsageInvoice[]
+
+  @@index([status])
+  @@index([currentPeriodEnd])
+  @@map("subscriptions")
+}
+
+// ─── coupons (admin-created discount codes / direct grants) ─────────────────
+model Coupon {
+  id              String    @id @default(uuid()) @db.Uuid
+  code            String?   @unique // redeemable code; null = admin direct-grant only
+  discountPercent Int // 1–100 (100 = free)
+  note            String?
+  active          Boolean   @default(true)
+  expiresAt       DateTime?
+  maxRedemptions  Int? // null = unlimited
+  timesRedeemed   Int       @default(0)
+  createdById     String?   @db.Uuid
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  redemptions CouponRedemption[]
+
+  @@index([code])
+  @@map("coupons")
+}
+
+model CouponRedemption {
+  id              String   @id @default(uuid()) @db.Uuid
+  couponId        String   @db.Uuid
+  userId          String   @db.Uuid
+  discountPercent Int // snapshot at redemption time
+  source          String   @default("CODE") // CODE | ADMIN
+  createdAt       DateTime @default(now())
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, userId]) // one use per coupon per user
+  @@index([userId])
+  @@map("coupon_redemptions")
+}
+
+// ─── 4. api_keys (Binance credentials, ENCRYPTED) ──────────────────────────
+model ApiKey {
+  id              String       @id @default(uuid()) @db.Uuid
+  userId          String       @db.Uuid
+  exchange        String       @default("BINANCE_FUTURES")
+  label           String       @default("default")
+  // AES-256-GCM ciphertext components — never store plaintext keys.
+  apiKeyCipher    String
+  apiKeyIv        String
+  apiKeyTag       String
+  secretCipher    String
+  secretIv        String
+  secretTag       String
+  // Cached non-secret metadata from validation:
+  status          ApiKeyStatus @default(UNVERIFIED)
+  canTrade        Boolean      @default(false)
+  canWithdraw     Boolean      @default(false) // we WARN loudly if true
+  binanceUid      String? // SHA-256 fingerprint of the API key — enforces one Binance account = one user (trial dup-prevention)
+  lastValidatedAt DateTime?
+  lastError       String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, exchange, label])
+  @@index([userId])
+  @@map("api_keys")
+}
+
+// ─── 5. trading_accounts (per-user account snapshot) ───────────────────────
+model TradingAccount {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  exchange         String    @default("BINANCE_FUTURES")
+  totalBalance     Decimal   @default(0) @db.Decimal(38, 18)
+  availableBalance Decimal   @default(0) @db.Decimal(38, 18)
+  unrealizedPnl    Decimal   @default(0) @db.Decimal(38, 18)
+  marginUsed       Decimal   @default(0) @db.Decimal(38, 18)
+  currency         String    @default("USDT")
+  lastSyncedAt     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, exchange])
+  @@index([userId])
+  @@map("trading_accounts")
+}
+
+// ─── 6. watchlists ─────────────────────────────────────────────────────────
+model Watchlist {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  symbols   String[] // e.g. ["BTCUSDT","ETHUSDT"]
+  isDefault Boolean  @default(true)
+  name      String   @default("Default")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("watchlists")
+}
+
+// ─── 7. bot_configs (per-user strategy & risk settings) ────────────────────
+model BotConfig {
+  id                     String      @id @default(uuid()) @db.Uuid
+  userId                 String      @unique @db.Uuid
+  status                 BotStatus   @default(STOPPED)
+  mode                   TradingMode @default(BALANCED)
+  // Risk / sizing
+  scoreThreshold         Int         @default(85)
+  leverage               Int         @default(10)
+  marginPerTradeUsd      Decimal     @default(5) @db.Decimal(18, 8)
+  dynamicSizing          Boolean     @default(false)
+  slPercent              Decimal     @default(1) @db.Decimal(8, 4)
+  tpRR                   Decimal     @default(3) @db.Decimal(8, 4)
+  // Dynamic trailing stop (user-tunable): arm the trail once profit ≥ trailArmPct%,
+  // then keep the stop trailGapPct% behind the running profit (ratchets up only).
+  trailArmPct            Decimal     @default(0.5) @db.Decimal(6, 3)
+  trailGapPct            Decimal     @default(0.5) @db.Decimal(6, 3)
+  // Scaled take-profit ladder (opt-in, default OFF): book partial profit in
+  // tranches instead of one all-or-nothing exit. TP1 at tp1Pct% books tp1SizePct%
+  // and moves the stop to break-even (the trade can no longer become a loss); TP2
+  // at (slPercent × tpRR × tp2Frac) books tp2SizePct%; the remainder rides the
+  // trailing stop to the full RR target. Current single-TP + trail behaviour is
+  // unchanged until useScaledTp is enabled.
+  useScaledTp            Boolean     @default(false)
+  tp1Pct                 Decimal     @default(0.6) @db.Decimal(6, 3)  // min TP %, first tranche + break-even trigger
+  tp1SizePct             Int         @default(40)                     // % of the position booked at TP1
+  tp2Frac                Decimal     @default(0.5) @db.Decimal(6, 3)  // TP2 distance as a fraction of the full RR target
+  tp2SizePct             Int         @default(30)                     // % of the position booked at TP2
+  maxConcurrentPositions Int         @default(3)
+  maxTradesPerDay        Int         @default(6)
+  maxConsecutiveLosses   Int         @default(3)
+  lossCooldownMin        Int         @default(30)
+  marginGuardPct         Int         @default(50) // refuse if total margin > 50% of balance
+  // Paper trading: simulate fills on live market data — no real orders. New users
+  // start in PAPER so they can fully test before risking real funds.
+  paperTrading           Boolean     @default(true)
+  // Per-user Telegram alerts (their OWN bot — not a shared channel). Token is
+  // stored as an AES-256-GCM JSON envelope (never plaintext).
+  telegramEnabled        Boolean     @default(false)
+  telegramBotTokenEnc    String?
+  telegramChatId         String?
+  // Strategy toggles (mirrors the 19-condition engine)
+  useAdxFilter           Boolean     @default(true)
+  useEmaTrend            Boolean     @default(true)
+  useRsi                 Boolean     @default(true)
+  useVolume              Boolean     @default(true)
+  useAtr                 Boolean     @default(true)
+  useBreakEven           Boolean     @default(true)
+  useTrailingStop        Boolean     @default(true)
+  // Adaptive learning (opt-in, default OFF): when on, the engine tunes the score
+  // threshold PER COIN from this user's own closed-trade history — raising the bar
+  // (or pausing) coins that lose, slightly relaxing it for coins with a proven win
+  // record. Never touches leverage, size, or the critical safety gates.
+  useAdaptiveLearning    Boolean     @default(false)
+  // Runtime bookkeeping
+  consecutiveLosses      Int         @default(0)
+  tradesToday            Int         @default(0)
+  lastDailyResetAt       DateTime?   // when tradesToday/streak were last reset (per the user's local midnight)
+  lastTickAt             DateTime?
+  pausedReason           String?
+  createdAt              DateTime    @default(now())
+  updatedAt              DateTime    @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("bot_configs")
+}
+
+// ─── 8. positions (open & historical, source-of-truth mirror of Binance) ───
+model Position {
+  id             String         @id @default(uuid()) @db.Uuid
+  userId         String         @db.Uuid
+  symbol         String
+  side           PositionSide
+  status         PositionStatus @default(OPEN)
+  entryPrice     Decimal        @db.Decimal(38, 18)
+  markPrice      Decimal?       @db.Decimal(38, 18)
+  exitPrice      Decimal?       @db.Decimal(38, 18)
+  quantity       Decimal        @db.Decimal(38, 18)
+  leverage       Int
+  marginUsd      Decimal        @db.Decimal(18, 8)
+  // protection state managed by the watchdog
+  stopLoss       Decimal?       @db.Decimal(38, 18)
+  takeProfit     Decimal?       @db.Decimal(38, 18)
+  breakEvenArmed Boolean        @default(false)
+  trailingArmed  Boolean        @default(false)
+  // Scaled-TP tranche bookkeeping (see BotConfig.useScaledTp). originalQuantity is
+  // the size at entry; quantity decrements as TP1/TP2 tranches are booked.
+  originalQuantity Decimal?     @db.Decimal(38, 18)
+  tp1Filled      Boolean        @default(false)
+  tp2Filled      Boolean        @default(false)
+  unrealizedPnl  Decimal        @default(0) @db.Decimal(38, 18)
+  realizedPnl    Decimal?       @db.Decimal(38, 18)
+  entryScore     Int? // 19-condition score at entry
+  entryBias      String?
+  binanceOrderId String?
+  openedAt       DateTime       @default(now())
+  closedAt       DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([userId, symbol])
+  @@map("positions")
+}
+
+// ─── 9. trade_history (completed round-trips, tax-ready ledger) ────────────
+model TradeHistory {
+  id          String       @id @default(uuid()) @db.Uuid
+  userId      String       @db.Uuid
+  symbol      String
+  side        PositionSide
+  entryPrice  Decimal      @db.Decimal(38, 18)
+  exitPrice   Decimal      @db.Decimal(38, 18)
+  quantity    Decimal      @db.Decimal(38, 18)
+  leverage    Int
+  grossPnl    Decimal      @db.Decimal(38, 18) // realized PnL
+  feeUsd      Decimal      @default(0) @db.Decimal(18, 8) // exchange (Binance) fees
+  netPnl      Decimal      @db.Decimal(38, 18) // user's take-home (= grossPnl − exchange fees)
+  rr          Decimal?     @db.Decimal(8, 4)
+  durationSec Int?
+  exitReason  String? // TP | SL | TRAIL | MANUAL | LIQUIDATION
+  positionId  String?      @db.Uuid
+  openedAt    DateTime
+  closedAt    DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, closedAt])
+  @@index([userId, symbol])
+  @@map("trade_history")
+}
+
+// ─── 10. pnl_history (daily aggregates for charts/ROI) ─────────────────────
+model PnlHistory {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  date        DateTime @db.Date
+  realizedPnl Decimal  @default(0) @db.Decimal(38, 18)
+  trades      Int      @default(0)
+  wins        Int      @default(0)
+  losses      Int      @default(0)
+  volume      Decimal  @default(0) @db.Decimal(38, 18)
+  equityEnd   Decimal  @default(0) @db.Decimal(38, 18)
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId])
+  @@map("pnl_history")
+}
+
+// ─── 11. usage_invoices (monthly subscription + per-trade overage billing) ──
+model UsageInvoice {
+  id             String        @id @default(uuid()) @db.Uuid
+  userId         String        @db.Uuid
+  subscriptionId String        @db.Uuid
+  periodStart    DateTime
+  periodEnd      DateTime
+  tradesCount    Int // trades opened in the period
+  includedTrades Int // included allowance at the time
+  overageTrades  Int // max(0, tradesCount − includedTrades)
+  baseCents      Int // monthly subscription price
+  overageCents   Int // overageTrades × per-trade price
+  totalCents     Int // baseCents + overageCents
+  status         InvoiceStatus @default(OPEN)
+  paidAt         DateTime?
+  provider       String?
+  providerRef    String?
+  createdAt      DateTime      @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([status])
+  @@map("usage_invoices")
+}
+
+// ─── 12. wallets (per-user trading P&L tally) ──────────────────────────────
+model Wallet {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @unique @db.Uuid
+  // Lifetime trading P&L (the user's own money; the platform no longer takes a cut).
+  lifetimeProfit Decimal  @default(0) @db.Decimal(38, 18)
+  currency       String   @default("USDT")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("wallets")
+}
+
+// ─── 12b. trial_claims (prevent duplicate free trials) ─────────────────────
+// One trial per user / email / mobile / Binance UID. Unique constraints make a
+// second trial on any of those identifiers impossible.
+model TrialClaim {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @unique @db.Uuid
+  email      String   @unique
+  mobile     String?  @unique
+  binanceUid String?  @unique
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("trial_claims")
+}
+
+// ─── 13. transactions (money movements: fee charges, subscriptions) ────────
+model Transaction {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  type      TxType
+  status    TxStatus @default(PENDING)
+  amountUsd Decimal  @db.Decimal(18, 8)
+  currency  String   @default("USDT")
+  reference String? // invoice id, provider charge id, etc.
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([status])
+  @@map("transactions")
+}
+
+// ─── 14. notifications ─────────────────────────────────────────────────────
+model Notification {
+  id        String              @id @default(uuid()) @db.Uuid
+  userId    String              @db.Uuid
+  channel   NotificationChannel @default(IN_APP)
+  title     String
+  body      String
+  read      Boolean             @default(false)
+  metadata  Json?
+  createdAt DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@map("notifications")
+}
+
+// ─── 15. support_tickets ───────────────────────────────────────────────────
+model SupportTicket {
+  id         String       @id @default(uuid()) @db.Uuid
+  userId     String       @db.Uuid
+  subject    String
+  status     TicketStatus @default(OPEN)
+  priority   String       @default("NORMAL")
+  messages   Json         @default("[]") // [{from, body, at}]
+  assignedTo String?      @db.Uuid
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([userId])
+  @@map("support_tickets")
+}
+
+// ─── 16. audit_logs (user-facing security trail) ───────────────────────────
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @db.Uuid
+  action    String // LOGIN | LOGOUT | API_KEY_ADDED | BOT_START | CONFIG_CHANGE ...
+  ip        String?
+  userAgent String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// ─── 17. admin_logs (privileged-action trail) ──────────────────────────────
+model AdminLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  adminId      String   @db.Uuid
+  targetUserId String?  @db.Uuid
+  action       String // USER_DISABLE | BOT_FORCE_STOP | FORCE_CLOSE | FEE_WAIVE | BROADCAST ...
+  reason       String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([adminId, createdAt])
+  @@index([targetUserId])
+  @@map("admin_logs")
+}
+
+// ─── 18. system_settings (platform-wide kv config) ─────────────────────────
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedBy String?  @db.Uuid
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+// ─── 19. sessions (refresh-token rotation / device management) ─────────────
+model Session {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @db.Uuid
+  refreshTokenHash String // argon2 hash of the refresh token; rotated on use
+  ip               String?
+  userAgent        String?
+  device           String?
+  revokedAt        DateTime?
+  expiresAt        DateTime
+  lastUsedAt       DateTime  @default(now())
+  createdAt        DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}

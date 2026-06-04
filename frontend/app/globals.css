@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Design tokens — space-separated RGB triplets consumed via rgb(var(--x)/a).
+   :root = Light, .dark = Dark. Accent stays a refined emerald so the trading
+   green-up / red-down semantics carry through unchanged; everything else is a
+   neutral slate canvas. Dark uses soft near-black greys, never pure black.
+   ──────────────────────────────────────────────────────────────────────────── */
+:root {
+  --bg: 247 248 250;        /* #f7f8fa page */
+  --surface: 255 255 255;   /* card */
+  --surface-2: 241 245 249; /* inset / table head / chip */
+  --border: 226 232 240;    /* #e2e8f0 */
+  --fg: 15 23 42;           /* #0f172a primary text */
+  --muted: 100 116 139;     /* #64748b secondary */
+  --accent: 5 150 105;      /* emerald-600 — brand / up / profit */
+  --accent-fg: 255 255 255; /* text on accent */
+  --danger: 220 38 38;      /* #dc2626 — down / loss / destructive */
+  --warn: 217 119 6;        /* #d97706 */
+  color-scheme: light;
+}
+
+.dark {
+  --bg: 13 17 23;           /* #0d1117 */
+  --surface: 22 27 34;      /* #161b22 */
+  --surface-2: 28 34 43;    /* #1c222b */
+  --border: 39 46 56;       /* #272e38 */
+  --fg: 230 237 243;        /* #e6edf3 */
+  --muted: 151 163 178;     /* #97a3b2 */
+  --accent: 52 211 153;     /* emerald-400 */
+  --accent-fg: 4 19 10;     /* near-black text on bright accent */
+  --danger: 248 113 113;    /* #f87171 */
+  --warn: 251 191 36;       /* #fbbf24 */
+  color-scheme: dark;
+}
+
+@layer base {
+  * { @apply border-border; }
+  body {
+    @apply bg-bg text-fg font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+  h1, h2, h3 { @apply tracking-tight; }
+  /* numbers/figures align in dense trading tables */
+  .tnum, .stat, th, td { font-variant-numeric: tabular-nums; }
+  ::selection { background: rgb(var(--accent) / 0.22); }
+  /* subtle, theme-aware scrollbars */
+  * { scrollbar-width: thin; scrollbar-color: rgb(var(--border)) transparent; }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-thumb { background: rgb(var(--border)); border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
+  *::-webkit-scrollbar-thumb:hover { background: rgb(var(--muted) / 0.5); }
+}
+
+/* ── Shared component layer — clean, flat, consistent ───────────────────────── */
+@layer components {
+  .card { @apply bg-surface border border-border rounded-xl shadow-card p-4 sm:p-5; }
+
+  .stat  { @apply text-lg sm:text-2xl font-semibold text-fg tracking-tight break-words; }
+  .label { @apply text-[11px] uppercase tracking-wider text-muted font-medium; }
+
+  /* Buttons — flat with a subtle hover; accessible focus ring. */
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium
+           bg-accent text-[rgb(var(--accent-fg))] transition-colors
+           hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40
+           disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium
+           bg-surface border border-border text-fg transition-colors hover:bg-surface2
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30
+           disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium
+           text-muted transition-colors hover:text-fg hover:bg-surface2
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30;
+  }
+  .btn-danger {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium
+           bg-danger/10 border border-danger/30 text-danger transition-colors hover:bg-danger/20
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-danger/30
+           disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  /* Form controls */
+  .input, .select, textarea.input {
+    @apply w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-fg
+           placeholder:text-muted transition-colors
+           focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/25;
+  }
+  .select { @apply pr-8; }
+
+  /* Status text */
+  .badge-up   { @apply text-accent; }
+  .badge-down { @apply text-danger; }
+
+  /* Pill / chip */
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-border bg-surface2 px-2.5 py-0.5 text-xs font-medium text-muted;
+  }
+}
