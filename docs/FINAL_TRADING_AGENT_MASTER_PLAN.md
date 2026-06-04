@@ -16,6 +16,20 @@
 > - [`PRODUCTION_DEPLOYMENT_MASTER_PLAN.md`](./PRODUCTION_DEPLOYMENT_MASTER_PLAN.md) — environments, CI/CD, observability, security, scaling, incident response
 > - [`07-ai-ml-llm-roadmap.md`](./07-ai-ml-llm-roadmap.md) (ML/LLM detail) · [`08-how-the-bot-works-today.md`](./08-how-the-bot-works-today.md) (current engine)
 >
+> **🏦 Business & founder doc set** (solo dev → global SaaS company):
+> - [`FOUNDER_MASTER_PLAN.md`](./FOUNDER_MASTER_PLAN.md) — Phase 0–8 roadmap (validate → incorporate → revenue → global)
+> - [`COMPANY_FORMATION_GUIDE.md`](./COMPANY_FORMATION_GUIDE.md) — India entity choice (→ Pvt Ltd) + registration + banking
+> - [`SAAS_MONETIZATION_MASTER_PLAN.md`](./SAAS_MONETIZATION_MASTER_PLAN.md) — plans, pricing, margins
+> - [`PAYMENT_GATEWAY_MASTER_PLAN.md`](./PAYMENT_GATEWAY_MASTER_PLAN.md) — Razorpay / MoR / Stripe (+ crypto-acceptance risk)
+> - [`LEGAL_AND_COMPLIANCE_MASTER_PLAN.md`](./LEGAL_AND_COMPLIANCE_MASTER_PLAN.md) — positioning, funds model, forbidden claims, legal docs
+> - [`TAX_AND_ACCOUNTING_MASTER_PLAN.md`](./TAX_AND_ACCOUNTING_MASTER_PLAN.md) — GST, export of services, global VAT, bookkeeping
+> - [`GO_TO_MARKET_MASTER_PLAN.md`](./GO_TO_MARKET_MASTER_PLAN.md) — personal → beta → first paying → public launch
+> - [`GLOBAL_EXPANSION_MASTER_PLAN.md`](./GLOBAL_EXPANSION_MASTER_PLAN.md) — India/US/UK/EU/UAE/Singapore readiness
+> - [`BUSINESS_OPERATIONS_MASTER_PLAN.md`](./BUSINESS_OPERATIONS_MASTER_PLAN.md) — support, compliance, monitoring, incidents
+> - [`FINANCIAL_PROJECTION_MASTER_PLAN.md`](./FINANCIAL_PROJECTION_MASTER_PLAN.md) — unit economics 10 → 1000 customers
+>
+> 💡 **Solo-founder bottom line:** stay **non-custodial** (never touch funds), position as **software not advice** (no profit guarantees — ever), **confirm a payment processor accepts crypto-trading SaaS before building billing**, and **incorporate late** (validate first; let revenue fund formality). Crypto + FinTech is heavily regulated — get a **CA + Company Secretary + FinTech lawyer** before taking money.
+>
 > ⚠️ **Honest disclaimer (read once):** No system "wins every trade." Crypto is non-stationary and adversarial. The realistic edge here is **fewer bad trades, smaller drawdowns, faster adaptation, and low cost** — not certainty. Every change is proven in **paper** before it risks a cent.
 
 ---
